@@ -64,15 +64,26 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: florianfish/Forge-Apk
-          # Même version de Forge-Apk que ce workflow (main, tag ou branche de test)
-          ref: ${{ github.job_workflow_sha || 'main' }}
           path: .forge-apk
           sparse-checkout: keys
       - if: inputs.stable-debug-key
         run: |
           cp .forge-apk/keys/debug.keystore "$RUNNER_TEMP/forge-debug.keystore"
-          cp .forge-apk/keys/debug-signing.init.gradle "$RUNNER_TEMP/forge-debug-signing.init.gradle"
           rm -rf .forge-apk
+          # Copier la clé dans ~/.android ne suffit pas : sur les runners, le plugin Android l'ignore
+          # et génère une clé neuve à chaque build. Ce script Gradle l'impose à signingConfigs.debug.
+          cat > "$RUNNER_TEMP/forge-debug-signing.init.gradle" <<'GRADLE'
+          def keystore = System.getenv('FORGE_DEBUG_KEYSTORE')
+          allprojects { project ->
+              project.plugins.withId('com.android.application') {
+                  def debug = project.extensions.getByName('android').signingConfigs.getByName('debug')
+                  debug.storeFile = new File(keystore)
+                  debug.storePassword = 'android'
+                  debug.keyAlias = 'androiddebugkey'
+                  debug.keyPassword = 'android'
+              }
+          }
+          GRADLE
           echo "FORGE_DEBUG_KEYSTORE=$RUNNER_TEMP/forge-debug.keystore" >> "$GITHUB_ENV"
           echo "FORGE_INIT_SCRIPT=-I $RUNNER_TEMP/forge-debug-signing.init.gradle" >> "$GITHUB_ENV"
 
