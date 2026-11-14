@@ -1,0 +1,17 @@
+// Script d'initialisation Gradle utilisé par android-build.yml (option stable-debug-key).
+// Impose la clé de debug fixe de Forge-Apk à la configuration de signature « debug » des applis Android.
+// Copier la clé dans ~/.android ne suffit pas : sur les runners GitHub, le plugin Android ne l'utilise pas
+// et génère une clé neuve à chaque build (Android refuse alors la mise à jour).
+def keystore = System.getenv('FORGE_DEBUG_KEYSTORE')
+if (keystore) {
+    allprojects { project ->
+        project.plugins.withId('com.android.application') {
+            def debug = project.extensions.getByName('android').signingConfigs.getByName('debug')
+            debug.storeFile = new File(keystore)
+            debug.storePassword = 'android'
+            debug.keyAlias = 'androiddebugkey'
+            debug.keyPassword = 'android'
+            project.logger.lifecycle("Forge-Apk : APK de debug signé avec la clé fixe ($keystore)")
+        }
+    }
+}
