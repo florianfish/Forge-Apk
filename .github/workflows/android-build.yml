@@ -64,6 +64,8 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: florianfish/Forge-Apk
+          # Même version de Forge-Apk que ce workflow (main, tag ou branche de test)
+          ref: ${{ github.job_workflow_sha || 'main' }}
           path: .forge-apk
           sparse-checkout: keys
       - if: inputs.stable-debug-key
