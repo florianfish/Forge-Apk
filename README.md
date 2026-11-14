@@ -72,6 +72,7 @@ jobs:
 | `java-version` | `17` | JDK Temurin |
 | `apk-path` | `app/build/outputs/apk/debug/app-debug.apk` | APK produit |
 | `debug-release` | `true` | Publier la pré-release « debug » sur la branche par défaut |
+| `stable-debug-key` | `true` | Signer avec la clé de debug fixe (`keys/debug.keystore`) : chaque APK de debug s'installe par-dessus le précédent |
 
 APK de debug toujours à jour : `https://github.com/<owner>/<repo>/releases/download/debug/<apk-name>-debug.apk`
 (connexion GitHub requise si le repo est privé).

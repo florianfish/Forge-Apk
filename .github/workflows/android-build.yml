@@ -39,6 +39,10 @@ on:
         description: "Publier l'APK dans la pré-release « debug » à chaque push sur la branche par défaut"
         type: boolean
         default: true
+      stable-debug-key:
+        description: "Signer avec la clé de debug fixe de Forge-Apk (chaque APK de debug s'installe par-dessus le précédent)"
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -52,6 +56,22 @@ jobs:
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v7
+
+      # Sans ça, le runner génère une clé de debug neuve à chaque build : Android refuse alors
+      # d'installer l'APK par-dessus le précédent (désinstallation obligatoire = données perdues).
+      - name: Clé de debug fixe
+        if: inputs.stable-debug-key
+        uses: actions/checkout@v7
+        with:
+          repository: florianfish/Forge-Apk
+          path: .forge-apk
+          sparse-checkout: keys
+      - if: inputs.stable-debug-key
+        run: |
+          mkdir -p ~/.android
+          cp .forge-apk/keys/debug.keystore ~/.android/debug.keystore
+          rm -rf .forge-apk
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
