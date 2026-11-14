@@ -1,0 +1,122 @@
+name: Release APK (réutilisable)
+
+# Compile un APK de release signé et le publie dans une release GitHub.
+#
+# Appel depuis un projet (voir README pour les déclencheurs) :
+#   jobs:
+#     release:
+#       uses: florianfish/Forge-Apk/.github/workflows/android-release.yml@main
+#       permissions:
+#         contents: write
+#       with:
+#         apk-name: MonAppli
+#         type: ${{ inputs.type }}
+#       secrets: inherit
+#
+# Le projet doit lire dans app/build.gradle.kts les variables d'environnement
+# KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD, VERSION_CODE et VERSION_NAME.
+
+on:
+  workflow_call:
+    inputs:
+      apk-name:
+        description: "Préfixe du fichier publié : <apk-name>-vX.Y.Z.apk"
+        type: string
+        required: true
+      type:
+        description: "Lancement manuel : mineure, correctif ou majeure (ignoré sur un push de tag)"
+        type: string
+        default: mineure
+      gradle-version:
+        description: "Version de Gradle à installer. Vide = wrapper du repo (./gradlew)"
+        type: string
+        default: ""
+      java-version:
+        type: string
+        default: "17"
+      apk-path:
+        type: string
+        default: app/build/outputs/apk/release/app-release.apk
+    secrets:
+      KEYSTORE_BASE64:
+        required: false
+      KEYSTORE_PASSWORD:
+        required: false
+      KEY_ALIAS:
+        required: false
+      KEY_PASSWORD:
+        required: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency: forge-release-${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Version
+        id: version
+        env:
+          TYPE: ${{ inputs.type }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" || { echo "::error::Lancer le workflow depuis la branche $DEFAULT_BRANCH"; exit 1; }
+            LAST=$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/v##' | grep -E '^[0-9]+(\.[0-9]+){0,2}$' | sort -V | tail -1)
+            IFS=. read -r MAJ MIN PAT <<< "${LAST:-0.0.0}"
+            MAJ=${MAJ:-0} MIN=${MIN:-0} PAT=${PAT:-0}
+            case "${TYPE:-mineure}" in
+              majeure)   TAG="v$((MAJ + 1)).0.0" ;;
+              correctif) TAG="v$MAJ.$MIN.$((PAT + 1))" ;;
+              *)         TAG="v$MAJ.$((MIN + 1)).0" ;;
+            esac
+            echo "Dernière version : v${LAST:-aucune} → nouvelle : $TAG"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: ${{ inputs.gradle-version }}
+
+      - name: Build signed APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          VERSION_CODE: ${{ github.run_number }}
+          TAG: ${{ steps.version.outputs.tag }}
+          GRADLE_VERSION: ${{ inputs.gradle-version }}
+          APK_PATH: ${{ inputs.apk-path }}
+          NAME: ${{ inputs.apk-name }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "::error::Secret KEYSTORE_BASE64 manquant (penser à « secrets: inherit » dans l'appel)"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_FILE"
+          if [ -n "$GRADLE_VERSION" ]; then GRADLE=gradle; else GRADLE=./gradlew; fi
+          VERSION_NAME="${TAG#v}" $GRADLE assembleRelease --no-daemon
+          cp "$APK_PATH" "$NAME-$TAG.apk"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          NAME: ${{ inputs.apk-name }}
+        run: |
+          APK="$NAME-$TAG.apk"
+          # Release déjà créée à la main dans l'interface GitHub : on y ajoute (ou remplace) l'APK
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" -R "$GITHUB_REPOSITORY" --clobber
+          else
+            # Lancement par le bouton : la release crée aussi le tag, sur le commit compilé.
+            # (Un tag créé avec le jeton du workflow ne relance pas de workflow : pas de double build.)
+            gh release create "$TAG" "$APK" -R "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --target "$GITHUB_SHA"
+          fi

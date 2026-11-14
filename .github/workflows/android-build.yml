@@ -1,0 +1,123 @@
+name: Build APK (réutilisable)
+
+# Compile un APK de debug, le met en artefact, commente les PR avec le lien,
+# et publie la pré-release « debug » (lien fixe) à chaque push sur la branche par défaut.
+#
+# Appel depuis un projet :
+#   jobs:
+#     build:
+#       uses: florianfish/Forge-Apk/.github/workflows/android-build.yml@main
+#       permissions:
+#         contents: write        # pré-release « debug »
+#         pull-requests: write   # commentaire sur les PR
+#       with:
+#         apk-name: MonAppli
+
+on:
+  workflow_call:
+    inputs:
+      apk-name:
+        description: "Nom de l'appli : artefact <apk-name>-apk, fichier <apk-name>-debug.apk"
+        type: string
+        required: true
+      gradle-version:
+        description: "Version de Gradle à installer (ex. 9.9.1). Vide = wrapper du repo (./gradlew)"
+        type: string
+        default: ""
+      gradle-tasks:
+        description: "Tâches Gradle à lancer"
+        type: string
+        default: assembleDebug
+      java-version:
+        type: string
+        default: "17"
+      apk-path:
+        description: "Chemin de l'APK produit"
+        type: string
+        default: app/build/outputs/apk/debug/app-debug.apk
+      debug-release:
+        description: "Publier l'APK dans la pré-release « debug » à chaque push sur la branche par défaut"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    # Deux pushes rapprochés sur main : le second attend, pour ne pas se marcher dessus sur la pré-release
+    concurrency:
+      group: forge-build-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: ${{ inputs.gradle-version }}
+
+      - name: Compilation
+        env:
+          GRADLE_VERSION: ${{ inputs.gradle-version }}
+          TASKS: ${{ inputs.gradle-tasks }}
+        run: |
+          if [ -n "$GRADLE_VERSION" ]; then GRADLE=gradle; else GRADLE=./gradlew; fi
+          $GRADLE $TASKS --no-daemon
+
+      - name: Rapport des tests
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rapports-tests
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v7
+        id: apk
+        with:
+          name: ${{ inputs.apk-name }}-apk
+          path: ${{ inputs.apk-path }}
+
+      # Sur une PR : commentaire avec le lien de l'APK de debug, mis à jour à chaque push
+      - name: Lien de l'APK dans la PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          URL: ${{ steps.apk.outputs.artifact-url }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          NAME: ${{ inputs.apk-name }}
+        run: |
+          body="📦 **APK de debug** (commit ${SHA:0:7}) : [télécharger $NAME-apk]($URL)
+
+          Fichier zip à décompresser ; lien valable 90 jours, connexion GitHub requise."
+          gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --edit-last --create-if-none --body "$body" \
+            || gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body "$body"
+
+      # Push sur la branche par défaut : pré-release « debug » remplacée à chaque build,
+      # lien fixe vers l'APK : https://github.com/<owner>/<repo>/releases/download/debug/<apk-name>-debug.apk
+      - name: Pré-release « debug »
+        if: >-
+          inputs.debug-release &&
+          github.event_name == 'push' &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK_PATH: ${{ inputs.apk-path }}
+          NAME: ${{ inputs.apk-name }}
+        run: |
+          APK="$NAME-debug.apk"
+          cp "$APK_PATH" "$APK"
+          notes="APK de debug du dernier build de \`${GITHUB_REF_NAME}\` (commit ${GITHUB_SHA:0:7}, run #${GITHUB_RUN_NUMBER}).
+
+          Remplacée à chaque push. S'installe à côté de la version release si l'appli utilise un suffixe d'applicationId en debug."
+          # On repart de zéro pour que le tag « debug » pointe sur le commit compilé
+          gh release delete debug -R "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
+          gh release create debug "$APK" -R "$GITHUB_REPOSITORY" \
+            --prerelease --latest=false --target "$GITHUB_SHA" \
+            --title "Debug — dernier build" --notes "$notes"
+          echo "📦 https://github.com/$GITHUB_REPOSITORY/releases/download/debug/$APK" >> "$GITHUB_STEP_SUMMARY"
