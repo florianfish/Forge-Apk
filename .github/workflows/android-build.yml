@@ -80,6 +80,20 @@ jobs:
         with:
           gradle-version: ${{ inputs.gradle-version }}
 
+      # Version du build de debug : celle de la dernière release (tag v*), le projet ajoute « -debug.<run> ».
+      # versionCode = numéro du run : chaque APK de debug s'installe par-dessus le précédent.
+      - name: Version
+        id: version
+        run: |
+          LAST=$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/v##' | grep -E '^[0-9]+(\.[0-9]+){0,2}$' | sort -V | tail -1)
+          if [ -n "$LAST" ]; then
+            echo "VERSION_NAME=$LAST" >> "$GITHUB_ENV"
+            echo "Dernière release : v$LAST"
+          else
+            echo "Aucune release : version par défaut du projet"
+          fi
+          echo "VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
       - name: Compilation
         env:
           GRADLE_VERSION: ${{ inputs.gradle-version }}

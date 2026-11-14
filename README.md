@@ -89,6 +89,25 @@ Secrets du projet, transmis par `secrets: inherit` : `KEYSTORE_BASE64`, `KEYSTOR
 
 Le projet lit dans `app/build.gradle.kts` les variables d'environnement `KEYSTORE_FILE`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` (signature) et `VERSION_CODE` (numéro du run), `VERSION_NAME` (tag sans le `v`).
 
+## Numéros de version
+
+| Build | `VERSION_NAME` | `VERSION_CODE` | Affiché (avec le suffixe debug du projet) |
+|---|---|---|---|
+| Release `v1.4.0` | `1.4.0` | n° du run de release | `1.4.0` |
+| Debug (push / PR) | dernière release, ex. `1.4.0` (absent s'il n'y en a pas : défaut du projet) | n° du run de build | `1.4.0-debug.57` |
+
+Un APK de debug se lit donc « compilé après la 1.4.0, build n° 57 ». Le `versionCode` qui augmente à chaque run permet aux APK de debug de s'installer les uns par-dessus les autres.
+
+Côté projet :
+
+```kotlin
+versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
+versionName = System.getenv("VERSION_NAME") ?: "0.1.0"
+buildTypes {
+    debug { versionNameSuffix = "-debug" + (System.getenv("GITHUB_RUN_NUMBER")?.let { ".$it" } ?: "") }
+}
+```
+
 ## Visibilité
 
 Un workflow réutilisable d'un repo **privé** n'est utilisable que par des repos privés, et seulement si l'accès est ouvert (Settings → Actions → General → Access). Un repo **public** comme MyRadioPlayer ne peut appeler que les workflows d'un repo public : Forge-Apk doit donc être public pour servir aux deux.
