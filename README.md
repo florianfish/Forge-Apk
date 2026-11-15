@@ -129,3 +129,21 @@ Un workflow réutilisable d'un repo **privé** n'est utilisable que par des repo
 ## Versions
 
 Les projets appellent `@main` : toute modification ici s'applique à leur prochain build. Pour figer une version, poser un tag (`v1`) et appeler `@v1`.
+
+## Renovate
+
+`default.json` est le preset [Renovate](https://docs.renovatebot.com/) partagé par mes projets. Chaque dépôt n'a qu'un `renovate.json` :
+
+```json
+{ "extends": ["local>florianfish/Forge-Apk"] }
+```
+
+- Passage le lundi avant 6 h (heure de Paris), 5 PR ouvertes au maximum.
+- Mineures et correctifs regroupés dans une PR, **fusionnée automatiquement si la CI passe** ; les majeures restent à valider à la main.
+- Kotlin (plugins android, compose, serialization) et Node.js (`.nvmrc` + image Docker) ont chacun leur PR.
+- npm : une version n'est proposée qu'après 3 jours.
+- La version de Gradle passée en `gradle-version:` aux workflows (projets sans wrapper) est suivie aussi.
+
+Forge-Apk n'a pas de CI sur ses PR : ses mises à jour d'actions ne sont jamais fusionnées automatiquement, à relire puisqu'elles touchent tous les projets.
+
+Installation : l'appli GitHub [Renovate](https://github.com/apps/renovate) (Mend), limitée aux dépôts concernés. Fusionner d'abord la PR de Forge-Apk (le preset doit exister sur `main`), puis celles des projets.

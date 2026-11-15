@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Preset Renovate partagé par mes projets (applis Android, TeslaPricing). Utilisation : { \"extends\": [\"local>florianfish/Forge-Apk\"] }",
+  "extends": ["config:recommended", "group:allNonMajor"],
+  "timezone": "Europe/Paris",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 5,
+  "packageRules": [
+    {
+      "description": "Mineures et correctifs : fusion automatique si la CI de la PR passe. Les majeures restent à valider à la main.",
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Kotlin : les plugins (android, compose, serialization) partagent la même version, dans une PR à part",
+      "matchPackageNames": ["/^org\\.jetbrains\\.kotlin/"],
+      "groupName": "Kotlin"
+    },
+    {
+      "description": "Node.js : .nvmrc et image Docker node avancent ensemble",
+      "matchDepNames": ["node"],
+      "groupName": "Node.js"
+    },
+    {
+      "description": "npm : attendre 3 jours avant de proposer une version (versions retirées, paquets compromis)",
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "3 days"
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "Version de Gradle passée aux workflows de Forge-Apk (gradle-version: \"9.9.1\") pour les projets sans wrapper",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      "matchStrings": ["gradle-version:\\s*[\"']?(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)[\"']?"],
+      "depNameTemplate": "gradle",
+      "datasourceTemplate": "gradle-version",
+      "versioningTemplate": "gradle"
+    }
+  ]
+}
