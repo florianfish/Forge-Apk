@@ -12,6 +12,7 @@ name: Build APK (réutilisable)
 #         pull-requests: write   # commentaire sur les PR
 #       with:
 #         apk-name: MonAppli
+#       secrets: inherit         # clé de debug fixe (secret DEBUG_KEYSTORE_BASE64)
 
 on:
   workflow_call:
@@ -43,6 +44,19 @@ on:
         description: "Signer avec la clé de debug fixe de Forge-Apk (chaque APK de debug s'installe par-dessus le précédent)"
         type: boolean
         default: true
+    secrets:
+      DEBUG_KEYSTORE_BASE64:
+        description: "Clé de debug fixe, encodée en base64 (base64 -w0 debug.keystore)"
+        required: false
+      DEBUG_KEYSTORE_PASSWORD:
+        description: "Mot de passe du keystore de debug (défaut : android)"
+        required: false
+      DEBUG_KEY_ALIAS:
+        description: "Alias de la clé de debug (défaut : androiddebugkey)"
+        required: false
+      DEBUG_KEY_PASSWORD:
+        description: "Mot de passe de la clé de debug (défaut : celui du keystore)"
+        required: false
 
 jobs:
   build:
@@ -59,33 +73,54 @@ jobs:
 
       # Sans ça, le runner génère une clé de debug neuve à chaque build : Android refuse alors
       # d'installer l'APK par-dessus le précédent (désinstallation obligatoire = données perdues).
+      # La clé vient du secret DEBUG_KEYSTORE_BASE64 du projet (« secrets: inherit » dans l'appel).
       - name: Clé de debug fixe
+        id: debug-key
         if: inputs.stable-debug-key
-        uses: actions/checkout@v7
-        with:
-          repository: florianfish/Forge-Apk
-          path: .forge-apk
-          sparse-checkout: keys
-      - if: inputs.stable-debug-key
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          FORGE_DEBUG_STORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD || 'android' }}
+          FORGE_DEBUG_KEY_ALIAS: ${{ secrets.DEBUG_KEY_ALIAS || 'androiddebugkey' }}
+          FORGE_DEBUG_KEY_PASSWORD: ${{ secrets.DEBUG_KEY_PASSWORD || secrets.DEBUG_KEYSTORE_PASSWORD || 'android' }}
         run: |
-          cp .forge-apk/keys/debug.keystore "$RUNNER_TEMP/forge-debug.keystore"
-          rm -rf .forge-apk
+          if [ -z "$DEBUG_KEYSTORE_BASE64" ]; then
+            # Les PR Dependabot (et de forks) n'ont pas accès aux secrets : build avec une clé jetable
+            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              echo "::warning::Secret DEBUG_KEYSTORE_BASE64 indisponible pour cette PR : APK signé avec une clé de debug jetable"
+              exit 0
+            fi
+            echo "::error::Secret DEBUG_KEYSTORE_BASE64 manquant (dépôt › Settings › Secrets and variables › Actions ; « secrets: inherit » dans l'appel ; ou stable-debug-key: false)"
+            exit 1
+          fi
+          KEYSTORE="$RUNNER_TEMP/forge-debug.keystore"
+          echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE" 2>/dev/null \
+            || { echo "::error::DEBUG_KEYSTORE_BASE64 n'est pas du base64 valide (coller tout le fichier encodé, sur une ligne)"; exit 1; }
+          # Empreinte attendue de l'APK, lue dans la clé elle-même
+          SHA256=$(keytool -list -v -keystore "$KEYSTORE" -storepass:env FORGE_DEBUG_STORE_PASSWORD -alias "$FORGE_DEBUG_KEY_ALIAS" 2>/dev/null \
+            | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f')
+          [ -n "$SHA256" ] \
+            || { echo "::error::Clé de debug illisible : DEBUG_KEYSTORE_PASSWORD ou DEBUG_KEY_ALIAS incorrect, ou DEBUG_KEYSTORE_BASE64 incomplet"; exit 1; }
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
           # Copier la clé dans ~/.android ne suffit pas : sur les runners, le plugin Android l'ignore
           # et génère une clé neuve à chaque build. Ce script Gradle l'impose à signingConfigs.debug.
           cat > "$RUNNER_TEMP/forge-debug-signing.init.gradle" <<'GRADLE'
-          def keystore = System.getenv('FORGE_DEBUG_KEYSTORE')
           allprojects { project ->
               project.plugins.withId('com.android.application') {
                   def debug = project.extensions.getByName('android').signingConfigs.getByName('debug')
-                  debug.storeFile = new File(keystore)
-                  debug.storePassword = 'android'
-                  debug.keyAlias = 'androiddebugkey'
-                  debug.keyPassword = 'android'
+                  debug.storeFile = new File(System.getenv('FORGE_DEBUG_KEYSTORE'))
+                  debug.storePassword = System.getenv('FORGE_DEBUG_STORE_PASSWORD')
+                  debug.keyAlias = System.getenv('FORGE_DEBUG_KEY_ALIAS')
+                  debug.keyPassword = System.getenv('FORGE_DEBUG_KEY_PASSWORD')
               }
           }
           GRADLE
-          echo "FORGE_DEBUG_KEYSTORE=$RUNNER_TEMP/forge-debug.keystore" >> "$GITHUB_ENV"
-          echo "FORGE_INIT_SCRIPT=-I $RUNNER_TEMP/forge-debug-signing.init.gradle" >> "$GITHUB_ENV"
+          {
+            echo "FORGE_DEBUG_KEYSTORE=$KEYSTORE"
+            echo "FORGE_DEBUG_STORE_PASSWORD=$FORGE_DEBUG_STORE_PASSWORD"
+            echo "FORGE_DEBUG_KEY_ALIAS=$FORGE_DEBUG_KEY_ALIAS"
+            echo "FORGE_DEBUG_KEY_PASSWORD=$FORGE_DEBUG_KEY_PASSWORD"
+            echo "FORGE_INIT_SCRIPT=-I $RUNNER_TEMP/forge-debug-signing.init.gradle"
+          } >> "$GITHUB_ENV"
 
       - uses: actions/setup-java@v6
         with:
@@ -120,15 +155,15 @@ jobs:
 
       # Garde-fou : si l'APK n'est pas signé avec la clé fixe, il ne s'installera pas par-dessus le précédent
       - name: Vérification de la signature
-        if: inputs.stable-debug-key
+        if: steps.debug-key.outputs.sha256 != ''
         env:
           APK_PATH: ${{ inputs.apk-path }}
-          EXPECTED: ee5f872caddfd94e632b9e17ae0ccf2e07b76a89be304b13008a0643d4eb4a1d
+          EXPECTED: ${{ steps.debug-key.outputs.sha256 }}
         run: |
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner"
           "$APKSIGNER" verify --print-certs "$APK_PATH" | tee certs.txt
           grep -qi "SHA-256 digest: $EXPECTED" certs.txt \
-            || { echo "::error::APK de debug non signé avec la clé fixe de Forge-Apk (keys/README.md)"; exit 1; }
+            || { echo "::error::APK de debug non signé avec la clé fixe (secret DEBUG_KEYSTORE_BASE64)"; exit 1; }
 
       - name: Rapport des tests
         if: failure()

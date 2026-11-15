@@ -30,6 +30,7 @@ jobs:
       apk-name: MonAppli
       # gradle-version: "9.9.1"                       # sans wrapper dans le repo
       # gradle-tasks: assembleDebug testDebugUnitTest
+    secrets: inherit           # clé de debug fixe (DEBUG_KEYSTORE_BASE64)
 ```
 
 `.github/workflows/release.yml` :
@@ -72,7 +73,20 @@ jobs:
 | `java-version` | `17` | JDK Temurin |
 | `apk-path` | `app/build/outputs/apk/debug/app-debug.apk` | APK produit |
 | `debug-release` | `true` | Publier la pré-release « debug » sur la branche par défaut |
-| `stable-debug-key` | `true` | Signer avec la clé de debug fixe (`keys/debug.keystore`) : chaque APK de debug s'installe par-dessus le précédent |
+| `stable-debug-key` | `true` | Signer avec la clé de debug fixe (secret `DEBUG_KEYSTORE_BASE64`) : chaque APK de debug s'installe par-dessus le précédent |
+
+Secrets du projet, transmis par `secrets: inherit` :
+
+| Secret | Défaut | Rôle |
+|---|---|---|
+| `DEBUG_KEYSTORE_BASE64` | — (obligatoire si `stable-debug-key`) | Keystore de debug encodé : `base64 -w0 debug.keystore` |
+| `DEBUG_KEYSTORE_PASSWORD` | `android` | Mot de passe du keystore |
+| `DEBUG_KEY_ALIAS` | `androiddebugkey` | Alias de la clé |
+| `DEBUG_KEY_PASSWORD` | celui du keystore | Mot de passe de la clé |
+
+La clé est imposée à `signingConfigs.debug` par un script d'initialisation Gradle (`gradle -I …`) : la copier dans `~/.android/` ne suffit pas sur les runners. L'empreinte de l'APK produit est ensuite comparée à celle de la clé, et le build échoue si elle ne correspond pas. Sur une PR sans accès aux secrets (Dependabot, fork), l'APK est signé avec une clé jetable, avec un avertissement. **Ne jamais utiliser cette clé pour une release.**
+
+Pour signer aussi les builds locaux avec la même clé : la copier dans `~/.android/debug.keystore`.
 
 APK de debug toujours à jour : `https://github.com/<owner>/<repo>/releases/download/debug/<apk-name>-debug.apk`
 (connexion GitHub requise si le repo est privé).
